@@ -6,6 +6,7 @@ import GameDetails from './components/GameDetails';
 import AuthForm from './components/AuthForm';
 import AdminPanel from './components/AdminPanel';
 import GameUpload from './components/GameUpload';
+import Profile from './components/Profile'; // YENİ: Profile komponentini import et
 
 function AppContent() {
   const { user, loading } = useAuth();
@@ -67,11 +68,9 @@ function AppContent() {
       {currentView === 'upload' && user && (
         <GameUpload />
       )}
+      {/* GÜNCELLENMİŞ KISIM */}
       {currentView === 'profile' && user && (
-        <div className="text-center py-12">
-          <div className="text-gray-400 text-lg">User Profile</div>
-          <p className="text-gray-500 mt-2">Profile page coming soon...</p>
-        </div>
+        <Profile />
       )}
     </Layout>
   );
