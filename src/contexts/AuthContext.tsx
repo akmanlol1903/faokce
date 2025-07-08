@@ -84,33 +84,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const signUp = async (email: string, password: string, username: string) => {
+  // GÜNCELLENMİŞ KISIM
+  const signUp = async (email: string, password:string, username: string) => {
     const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
+        email,
+        password,
+        options: {
+            data: {
+                username: username,
+            }
+        }
     });
 
     if (error) {
-      throw error;
+        throw error;
     }
-
-    if (data.user) {
-      // Create profile
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .insert([
-          {
-            id: data.user.id,
-            email: data.user.email!,
-            username,
-            is_admin: false,
-          },
-        ]);
-
-      if (profileError) {
-        throw profileError;
-      }
-    }
+    // Profil ekleme kodu buradan kaldırıldı, çünkü bu işlem artık veritabanı trigger'ı ile yapılıyor.
   };
 
   const signOut = async () => {
