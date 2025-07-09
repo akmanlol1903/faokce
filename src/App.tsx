@@ -58,6 +58,7 @@ function AppContent() {
       onViewChange={handleViewChange}
       searchTerm={searchTerm}
       setSearchTerm={setSearchTerm}
+      onGameSelect={handleGameSelect}
     >
       {currentView === 'home' && (
         // YENİ: GameList'e arama state'i ve fonksiyonu eklendi

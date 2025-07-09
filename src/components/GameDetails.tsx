@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Download, Star, MessageCircle, Calendar, ChevronLeft, ChevronRight, Loader2, Send, User as UserIcon } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { ArrowLeft, Download, Star, ChevronLeft, ChevronRight, Loader2, Send, ArrowUpRight } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { Database } from '../lib/supabase';
@@ -23,11 +23,13 @@ const GameDetails: React.FC<{ gameId: string; onBack: () => void; }> = ({ gameId
   const [comments, setComments] = useState<Comment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  
+  const [creatorName, setCreatorName] = useState('');
+
   const [newComment, setNewComment] = useState('');
   const [newRating, setNewRating] = useState(5);
   const [submitting, setSubmitting] = useState(false);
-  const [currentScreenshot, setCurrentScreenshot] = useState(0);
+
+  const screenshotsRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     fetchGameData();
@@ -35,13 +37,14 @@ const GameDetails: React.FC<{ gameId: string; onBack: () => void; }> = ({ gameId
 
   const fetchGameData = async () => {
     setLoading(true);
-    setError(null);
-    setSteamDetails(null);
     try {
       const { data: gameData, error: gameError } = await supabase.from('games').select('*').eq('id', gameId).single();
       if (gameError) throw new Error("Oyun bulunamadı.");
       setGame(gameData);
-      
+
+      const { data: profileData } = await supabase.from('profiles').select('username').eq('id', gameData.created_by).single();
+      setCreatorName(profileData?.username || 'Anonymous');
+
       await fetchComments();
 
       if (gameData.steam_appid) {
@@ -57,19 +60,32 @@ const GameDetails: React.FC<{ gameId: string; onBack: () => void; }> = ({ gameId
       setLoading(false);
     }
   };
-  
+
   const fetchComments = async () => {
     const { data, error } = await supabase.from('comments').select('*, profiles(username, avatar_url)').eq('game_id', gameId).order('created_at', { ascending: false });
     if (error) console.error("Error fetching comments:", error);
     else setComments(data || []);
   };
-  
+
+  const handleScrollTo = (id: string) => {
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  const scrollScreenshots = (direction: 'left' | 'right') => {
+    if (screenshotsRef.current) {
+        const scrollAmount = screenshotsRef.current.clientWidth * 0.8;
+        screenshotsRef.current.scrollBy({
+            left: direction === 'left' ? -scrollAmount : scrollAmount,
+            behavior: 'smooth'
+        });
+    }
+  };
+
   const handleSubmitComment = async () => {
     if (!user || !newComment.trim()) return;
     setSubmitting(true);
     try {
-      const { error } = await supabase.from('comments').insert([{ game_id: gameId, user_id: user.id, content: newComment.trim(), rating: newRating }]);
-      if (error) throw error;
+      await supabase.from('comments').insert([{ game_id: gameId, user_id: user.id, content: newComment.trim(), rating: newRating }]);
       setNewComment('');
       setNewRating(5);
       await fetchComments();
@@ -83,124 +99,149 @@ const GameDetails: React.FC<{ gameId: string; onBack: () => void; }> = ({ gameId
   const handleDownload = async () => {
     if (!game) return;
     try {
-        const { error: updateError } = await supabase
-            .from('games')
-            .update({ download_count: game.download_count + 1 })
-            .eq('id', game.id);
-        if (updateError) console.error('Error updating download count:', updateError);
+        await supabase.from('games').update({ download_count: game.download_count + 1 }).eq('id', game.id);
         let downloadLink = game.file_url;
         if (downloadLink.includes('drive.google.com')) {
             const fileIdMatch = downloadLink.match(/drive\.google\.com\/file\/d\/([^/]+)/);
             if (fileIdMatch && fileIdMatch[1]) {
-                const fileId = fileIdMatch[1];
-                downloadLink = `https://drive.google.com/uc?export=download&id=${fileId}`;
+                downloadLink = `https://drive.google.com/uc?export=download&id=${fileIdMatch[1]}`;
             }
         }
         window.open(downloadLink, '_blank');
         setGame(prev => prev ? { ...prev, download_count: prev.download_count + 1 } : null);
     } catch (error: any) {
         console.error('Download failed:', error.message);
-        alert(`Error: Could not process the download. ${error.message}`);
     }
   };
 
   const screenshots = game?.screenshots || [];
-  const nextScreenshot = () => setCurrentScreenshot((p) => (p + 1) % screenshots.length);
-  const prevScreenshot = () => setCurrentScreenshot((p) => (p - 1 + screenshots.length) % screenshots.length);
 
-  if (loading) return <div className="flex justify-center items-center h-96"><Loader2 className="h-12 w-12 animate-spin text-purple-500" /></div>;
+  if (loading) return <div className="flex justify-center items-center h-screen"><Loader2 className="h-12 w-12 animate-spin text-purple-500" /></div>;
   if (error) return <div className="text-center text-red-400 p-8">{error}</div>;
   if (!game) return null;
 
   return (
-    <div className="space-y-8">
-      <button onClick={onBack} className="flex items-center space-x-2 text-purple-400 hover:text-purple-300 transition-colors">
-        <ArrowLeft className="h-4 w-4" /><span>Back to Games</span>
-      </button>
+    <div className="bg-slate-900 text-white min-h-screen">
+      <div className="max-w-7xl mx-auto p-8">
+        <button onClick={onBack} className="flex items-center justify-center h-12 w-12 border border-slate-700 hover:border-slate-500 transition-colors mb-8">
+          <ArrowLeft className="h-6 w-6" />
+        </button>
 
-      <div className="bg-slate-800 rounded-xl p-8 border border-slate-700">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-          <div className="md:col-span-1"><img src={game.image_url || 'https://via.placeholder.com/460x215'} alt={game.title} className="w-full rounded-lg object-cover shadow-lg" /></div>
-          <div className="md:col-span-2 flex flex-col">
-            <h1 className="text-4xl font-bold text-white">{game.title}</h1>
-            <p className="text-gray-300 leading-relaxed mt-4 flex-grow">{steamDetails?.short_description || game.description}</p>
-            <div className="flex items-center space-x-6 text-sm text-gray-400 pt-4 mt-auto">
-              <div className="flex items-center space-x-1"><Star className="h-4 w-4 text-yellow-400 fill-current" /><span>{game.rating.toFixed(1)}</span></div>
-              <div className="flex items-center space-x-1"><Download className="h-4 w-4" /><span>{game.download_count}</span></div>
-              <div className="flex items-center space-x-1"><Calendar className="h-4 w-4" /><span>{new Date(game.created_at).toLocaleDateString()}</span></div>
-            </div>
-            <button onClick={handleDownload} className="w-full mt-6 bg-purple-600 hover:bg-purple-700 text-white px-6 py-3 rounded-lg flex items-center justify-center space-x-2 font-medium transition-colors">
-              <Download className="h-5 w-5" /><span>Download Game</span>
-            </button>
-          </div>
-        </div>
-      </div>
-      
-      {screenshots.length > 0 && (
-        <div className="bg-slate-800 rounded-xl p-6 md:p-8 border border-slate-700">
-          <h2 className="text-2xl font-bold text-white mb-4">Screenshots</h2>
-          <div className="relative">
-            <img src={screenshots[currentScreenshot]} alt={`Screenshot ${currentScreenshot + 1}`} className="w-full rounded-lg aspect-video object-cover" />
-            <button onClick={prevScreenshot} className="absolute left-2 md:left-4 top-1/2 -translate-y-1/2 bg-black/50 p-2 rounded-full text-white hover:bg-black/80 transition-colors"><ChevronLeft /></button>
-            <button onClick={nextScreenshot} className="absolute right-2 md:right-4 top-1/2 -translate-y-1/2 bg-black/50 p-2 rounded-full text-white hover:bg-black/80 transition-colors"><ChevronRight /></button>
-          </div>
-        </div>
-      )}
+        <div className="w-full space-y-16">
+          {/* Main Game Image */}
+          <img src={game.image_url || 'https://via.placeholder.com/1280x720'} alt={game.title} className="w-full h-auto object-cover" />
 
-      {steamDetails && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mt-8">
-            <div className="lg:col-span-2 bg-slate-800 rounded-xl p-6 md:p-8 border border-slate-700">
-              <h2 className="text-2xl font-bold text-white mb-4">About This Game</h2>
-              <div className="prose prose-invert text-gray-300 max-w-none" dangerouslySetInnerHTML={{ __html: steamDetails.about_the_game }} />
+          {/* Game Info Section */}
+          <div>
+            <div className="mb-8">
+              <h1 className="text-5xl lg:text-8xl font-black uppercase tracking-wider mb-2">{game.title}</h1>
+              <div className="flex justify-between items-baseline text-slate-400">
+                <p>{creatorName}</p>
+                <p>{new Date(game.created_at).getFullYear()}</p>
+              </div>
             </div>
-            <div className="lg:col-span-1 bg-slate-800 rounded-xl p-6 md:p-8 border border-slate-700">
-              <h2 className="text-2xl font-bold text-white mb-4">System Requirements</h2>
-              <div className="space-y-4 text-sm">
+            <p className="text-slate-300 leading-relaxed text-lg mb-12">{steamDetails?.short_description || game.description}</p>
+          </div>
+
+          {/* Section Links */}
+          <div className="w-full space-y-4 border-y border-slate-700 text-lg">
+            {steamDetails && <SectionLink title="ABOUT" onClick={() => handleScrollTo('about-section')} />}
+            {steamDetails?.pc_requirements?.minimum && <SectionLink title="SYSTEM REQUIREMENTS" onClick={() => handleScrollTo('requirements-section')} />}
+            {screenshots.length > 0 && <SectionLink title="SCREENSHOTS" onClick={() => handleScrollTo('screenshots-section')} />}
+            <SectionLink title="COMMENTS & REVIEWS" onClick={() => handleScrollTo('comments-section')} />
+            <SectionLink title="DOWNLOAD" onClick={handleDownload} icon={<Download className="h-5 w-5"/>} />
+          </div>
+
+          {/* Screenshots Section */}
+          {screenshots.length > 0 && (
+            <div id="screenshots-section" className="space-y-8">
+              <h2 className="text-3xl font-bold">SCREENSHOTS</h2>
+              <div className="relative">
+                  <div ref={screenshotsRef} className="flex space-x-4 overflow-x-auto snap-x snap-mandatory scrollbar-hide">
+                      {screenshots.map((src, index) => (
+                          <img key={index} src={src} alt={`${game.title} screenshot ${index + 1}`} className="snap-center w-10/12 md:w-2/3 flex-shrink-0 h-auto object-cover" />
+                      ))}
+                  </div>
+                  <button onClick={() => scrollScreenshots('left')} className="absolute left-0 top-1/2 -translate-y-1/2 bg-black/50 p-2 rounded-full text-white hover:bg-black/80 transition-colors z-10">
+                      <ChevronLeft />
+                  </button>
+                  <button onClick={() => scrollScreenshots('right')} className="absolute right-0 top-1/2 -translate-y-1/2 bg-black/50 p-2 rounded-full text-white hover:bg-black/80 transition-colors z-10">
+                      <ChevronRight />
+                  </button>
+              </div>
+            </div>
+          )}
+
+          {/* About Section */}
+          {steamDetails && (
+            <div id="about-section" className="space-y-8 pt-16 border-t border-slate-700">
+              <h2 className="text-3xl font-bold">ABOUT</h2>
+              <div className="prose prose-invert text-gray-300 max-w-none text-base" dangerouslySetInnerHTML={{ __html: steamDetails.about_the_game }} />
+            </div>
+          )}
+
+          {/* System Requirements Section */}
+          {steamDetails?.pc_requirements?.minimum && (
+            <div id="requirements-section" className="space-y-8 pt-16 border-t border-slate-700">
+              <h2 className="text-3xl font-bold">SYSTEM REQUIREMENTS</h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 <div>
-                  <h3 className="font-semibold text-purple-400 mb-2">Minimum:</h3>
+                  <h3 className="font-semibold text-purple-400 mb-2">MINIMUM:</h3>
                   <div className="text-gray-300 prose prose-invert max-w-none prose-sm" dangerouslySetInnerHTML={{ __html: steamDetails.pc_requirements.minimum }} />
                 </div>
                 {steamDetails.pc_requirements.recommended && (
                   <div>
-                    <h3 className="font-semibold text-purple-400 mt-4 mb-2">Recommended:</h3>
+                    <h3 className="font-semibold text-purple-400 mb-2">RECOMMENDED:</h3>
                     <div className="text-gray-300 prose prose-invert max-w-none prose-sm" dangerouslySetInnerHTML={{ __html: steamDetails.pc_requirements.recommended }} />
                   </div>
                 )}
               </div>
             </div>
-          </div>
-      )}
-      
-      <div className="bg-slate-800 rounded-xl p-6 md:p-8 border border-slate-700">
-        <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-3"><MessageCircle />Comments & Reviews</h2>
-        {user && (
-          <div className="bg-slate-700/50 rounded-lg p-6 mb-8">
-            <textarea value={newComment} onChange={(e) => setNewComment(e.target.value)} placeholder="Write your review..." className="w-full bg-slate-800 text-white p-4 rounded-lg border border-slate-600 focus:border-purple-500" rows={3}/>
-            <div className="flex justify-between items-center mt-4">
-                <div className="flex items-center space-x-1">{[1, 2, 3, 4, 5].map(star => (<button key={star} onClick={() => setNewRating(star)} className={`h-6 w-6 ${star <= newRating ? 'text-yellow-400 fill-current' : 'text-gray-400'}`}><Star /></button>))}</div>
-                <button onClick={handleSubmitComment} disabled={submitting || !newComment.trim()} className="bg-purple-600 hover:bg-purple-700 disabled:opacity-50 px-6 py-2 rounded-lg flex items-center space-x-2"><Send className="h-4 w-4" /><span>Submit</span></button>
-            </div>
-          </div>
-        )}
-        <div className="space-y-4">
-          {comments.length === 0 ? (<p className="text-center text-gray-400 py-8">No comments yet. Be the first to review!</p>) : (
-            comments.map(c => (
-              <div key={c.id} className="bg-slate-700 rounded-lg p-4 flex gap-4">
-                <img src={c.profiles?.avatar_url || `https://api.dicebear.com/8.x/bottts/svg?seed=${c.profiles?.username}`} alt="avatar" className="w-10 h-10 rounded-full bg-slate-800"/>
-                <div className="flex-1">
-                  <div className="flex justify-between items-center">
-                    <span className="font-semibold text-white">{c.profiles?.username || 'User'}</span>
-                    <div className="flex items-center gap-1">{[...Array(c.rating)].map((_, i) => <Star key={i} className="h-4 w-4 text-yellow-400 fill-current"/>)}{[...Array(5 - c.rating)].map((_, i) => <Star key={i} className="h-4 w-4 text-gray-500"/>)}</div>
-                  </div>
-                  <p className="text-gray-300 mt-1">{c.content}</p>
+          )}
+          
+          {/* Comments Section */}
+          <div id="comments-section" className="space-y-8 pt-16 border-t border-slate-700">
+            <h2 className="text-3xl font-bold">COMMENTS & REVIEWS</h2>
+            {user && (
+              <div className="bg-slate-800/50 p-4">
+                <textarea value={newComment} onChange={(e) => setNewComment(e.target.value)} placeholder="Write your review..." className="w-full bg-slate-800 text-white p-3 border border-slate-600 focus:border-purple-500" rows={3}/>
+                <div className="flex justify-between items-center mt-3">
+                    <div className="flex items-center space-x-1">{[1, 2, 3, 4, 5].map(star => (<button key={star} onClick={() => setNewRating(star)} className={`h-6 w-6 ${star <= newRating ? 'text-yellow-400 fill-current' : 'text-gray-400'}`}><Star /></button>))}</div>
+                    <button onClick={handleSubmitComment} disabled={submitting || !newComment.trim()} className="bg-purple-600 hover:bg-purple-700 disabled:opacity-50 px-5 py-2 flex items-center space-x-2 text-sm"><Send className="h-4 w-4" /><span>Submit</span></button>
                 </div>
               </div>
-            ))
-          )}
+            )}
+            <div className="space-y-4">
+              {comments.length === 0 ? (<p className="text-center text-gray-400 py-8">No comments yet.</p>) : (
+                comments.map(c => (
+                  <div key={c.id} className="bg-slate-800 p-4 flex gap-4">
+                    <img src={c.profiles?.avatar_url || `https://api.dicebear.com/8.x/bottts/svg?seed=${c.profiles?.username}`} alt="avatar" className="w-10 h-10 rounded-full bg-slate-800"/>
+                    <div className="flex-1">
+                      <div className="flex justify-between items-center">
+                        <span className="font-semibold text-white">{c.profiles?.username || 'User'}</span>
+                        <div className="flex items-center gap-1">{[...Array(c.rating)].map((_, i) => <Star key={i} className="h-4 w-4 text-yellow-400 fill-current"/>)}{[...Array(5 - c.rating)].map((_, i) => <Star key={i} className="h-4 w-4 text-gray-500"/>)}</div>
+                      </div>
+                      <p className="text-gray-300 mt-1">{c.content}</p>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
         </div>
       </div>
     </div>
   );
 };
+
+// Yardımcı bileşen
+const SectionLink: React.FC<{title: string, onClick: () => void, icon?: React.ReactNode}> = ({ title, onClick, icon }) => (
+    <button onClick={onClick} className="w-full flex justify-between items-center py-4 border-b border-slate-700 last:border-b-0 hover:text-purple-400 transition-colors group">
+        <span className="font-bold">{title}</span>
+        <div className="transform transition-transform duration-300 group-hover:translate-x-2">
+            {icon || <ArrowUpRight className="h-5 w-5"/>}
+        </div>
+    </button>
+);
 
 export default GameDetails;
