@@ -6,13 +6,15 @@ import GameDetails from './components/GameDetails';
 import AuthForm from './components/AuthForm';
 import AdminPanel from './components/AdminPanel';
 import GameUpload from './components/GameUpload';
-import Profile from './components/Profile'; // YENİ: Profile komponentini import et
+import Profile from './components/Profile';
 
 function AppContent() {
   const { user, loading } = useAuth();
   const [currentView, setCurrentView] = useState<'home' | 'login' | 'register' | 'admin' | 'upload' | 'profile' | 'game-details'>('home');
   const [selectedGameId, setSelectedGameId] = useState<string>('');
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  // YENİ: Arama state'i buraya taşındı
+  const [searchTerm, setSearchTerm] = useState('');
 
   const handleGameSelect = (gameId: string) => {
     setSelectedGameId(gameId);
@@ -36,7 +38,6 @@ function AppContent() {
     );
   }
 
-  // Show auth form if not authenticated and trying to access auth views
   if (!user && (currentView === 'login' || currentView === 'register')) {
     return (
       <AuthForm
@@ -46,15 +47,24 @@ function AppContent() {
     );
   }
 
-  // Redirect to home if not authenticated
   if (!user && (currentView === 'admin' || currentView === 'upload' || currentView === 'profile')) {
     setCurrentView('home');
   }
 
   return (
-    <Layout currentView={currentView} onViewChange={handleViewChange}>
+    // YENİ: Layout'a arama state'i ve fonksiyonu eklendi
+    <Layout
+      currentView={currentView}
+      onViewChange={handleViewChange}
+      searchTerm={searchTerm}
+      setSearchTerm={setSearchTerm}
+    >
       {currentView === 'home' && (
-        <GameList onGameSelect={handleGameSelect} />
+        // YENİ: GameList'e arama state'i ve fonksiyonu eklendi
+        <GameList 
+            onGameSelect={handleGameSelect} 
+            searchTerm={searchTerm} 
+        />
       )}
       {currentView === 'game-details' && (
         <GameDetails 
@@ -68,7 +78,6 @@ function AppContent() {
       {currentView === 'upload' && user && (
         <GameUpload />
       )}
-      {/* GÜNCELLENMİŞ KISIM */}
       {currentView === 'profile' && user && (
         <Profile />
       )}

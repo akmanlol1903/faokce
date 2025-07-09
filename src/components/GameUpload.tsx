@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Upload, Image as ImageIcon, FileText, Tag, Save, Search, Link as LinkIcon, Loader2 } from 'lucide-react';
+import { Upload, Image as ImageIcon, FileText, Tag, Save, Search, Link as LinkIcon, Loader2, Info } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -10,7 +10,7 @@ interface SteamSearchResult {
 }
 
 const GameUpload: React.FC = () => {
-  const { user } = useAuth();
+  const { user, session } = useAuth();
 
   // Form verileri için state'ler
   const [formData, setFormData] = useState({
@@ -19,19 +19,18 @@ const GameUpload: React.FC = () => {
     category: 'action',
   });
   const [steamAppId, setSteamAppId] = useState<number | null>(null);
-  const [gameFile, setGameFile] = useState<File | null>(null);
+  const [gameLink, setGameLink] = useState('');
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [screenshots, setScreenshots] = useState<string[]>([]);
 
   // Arayüz durumları için state'ler
-  const [loading, setLoading] = useState(false); // Ana form gönderme işlemi için
+  const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
-  const [isProcessing, setIsProcessing] = useState(false); // Steam arama/detay getirme işlemi için
-  
-  // HATA BURADA OLUŞUYORDU: searchTerm state'i eksik veya yanlış tanımlanmış olabilir.
-  // Doğru tanımlama aşağıdadır.
-  const [searchTerm, setSearchTerm] = useState(''); 
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
   const [searchResults, setSearchResults] = useState<SteamSearchResult[]>([]);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
 
   const categories = [
     { value: 'action', label: 'Action' },
@@ -43,21 +42,27 @@ const GameUpload: React.FC = () => {
     { value: 'arcade', label: 'Arcade' },
   ];
 
-  // Steam'de arama yapar veya linki çözer
   const handleSearch = async () => {
     if (!searchTerm.trim()) return;
     setIsProcessing(true);
     setSearchResults([]);
     setMessage('');
-
     const isSteamUrl = /store\.steampowered\.com\/app\/(\d+)/.test(searchTerm);
-
     try {
       if (isSteamUrl) {
         setMessage("Resolving Steam link...");
-        const { data, error } = await supabase.functions.invoke('steam-resolve-url', { body: { url: searchTerm } });
-        if (error || !data.success) throw new Error(error?.message || data.message);
-        await fillFormWithSteamData(data);
+        const { data: resolvedData, error: resolveError } = await supabase.functions.invoke('steam-resolve-url', { body: { url: searchTerm } });
+        if (resolveError || !resolvedData.success) throw new Error(resolveError?.message || resolvedData.message);
+
+        setMessage("Fetching additional details...");
+        const { data: detailsData, error: detailsError } = await supabase.functions.invoke('steam-get-details', { body: { appId: resolvedData.appid } });
+        if (detailsError || !detailsData.success) {
+            console.warn("Could not fetch extra details, continuing with basic info.");
+            await fillFormWithSteamData(resolvedData);
+        } else {
+            const combinedData = { ...resolvedData, ...detailsData };
+            await fillFormWithSteamData(combinedData);
+        }
       } else {
         setMessage("Searching on Steam...");
         const { data, error } = await supabase.functions.invoke('steam-search', { body: { searchTerm } });
@@ -72,114 +77,155 @@ const GameUpload: React.FC = () => {
     }
   };
 
-  // Arama listesinden seçilen oyunun detaylarını getirir
   const handleSelectGame = async (game: SteamSearchResult) => {
     setSearchTerm(game.name);
-    setFormData(prev => ({ ...prev, title: game.name, description: '', category: 'action' }));
     setSearchResults([]);
     setImageUrl(null);
     setImageFile(null);
+    setScreenshots([]);
     setIsProcessing(true);
     setMessage('Fetching details from Steam Store...');
     try {
       const { data, error } = await supabase.functions.invoke('steam-get-details', { body: { appId: game.appid } });
       if (error || !data.success) throw new Error(error?.message || data.message);
-      await fillFormWithSteamData(data);
+      await fillFormWithSteamData({ ...data, title: game.name, appid: game.appid });
     } catch (e: any) {
       setMessage(`Could not find store details for "${game.name}". Please fill in manually.`);
+      setFormData({ title: game.name, description: '', category: 'action' });
     } finally {
       setIsProcessing(false);
     }
   };
 
-  // Gelen Steam verisiyle formu doldurur
   const fillFormWithSteamData = async (steamData: any) => {
+    const finalImageUrl = steamData.header_image || steamData.imageUrl;
+    const finalAppId = steamData.appid || steamData.steam_appid;
+    const screenshotUrls = steamData.screenshots?.map((ss: any) => ss.url || ss.path_full) || [];
+
     setFormData({
-      title: steamData.title,
-      description: steamData.short_description || steamData.about_the_game || '',
-      category: steamData.genres?.[0]?.description.toLowerCase() || 'action',
+      title: steamData.title || steamData.name,
+      description: steamData.short_description || steamData.about_the_game || steamData.description || '',
+      category: steamData.category || steamData.genres?.[0]?.description.toLowerCase() || 'action',
     });
-    setSteamAppId(steamData.appid);
-    setImageUrl(steamData.header_image);
+    setSteamAppId(finalAppId);
+    setImageUrl(finalImageUrl);
+    setScreenshots(screenshotUrls);
     setMessage('Game details loaded successfully!');
-    try {
-      const response = await fetch(steamData.header_image);
-      const blob = await response.blob();
-      const file = new File([blob], `${steamData.appid}.jpg`, { type: blob.type });
-      setImageFile(file);
-    } catch (error) {
-      console.error("Could not fetch image file from Steam:", error);
+
+    if (finalImageUrl) {
+        try {
+          const response = await fetch(finalImageUrl);
+          const blob = await response.blob();
+          const file = new File([blob], `${finalAppId}.jpg`, { type: blob.type });
+          setImageFile(file);
+        } catch (error) {
+          console.error("Could not fetch image file from Steam:", error);
+        }
     }
   };
 
-  // Manuel form girişlerini yönetir
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }));
   };
+  
+  const handleLinkChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setGameLink(e.target.value);
+  };
 
-  // Manuel dosya seçimini yönetir
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, type: 'game' | 'image') => {
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      if (type === 'game') {
-        setGameFile(file);
-      } else {
         setImageFile(file);
         const reader = new FileReader();
         reader.onloadend = () => { setImageUrl(reader.result as string) };
         reader.readAsDataURL(file);
-      }
     }
   };
 
-  // Dosyayı Supabase Storage'a yükler
-  const uploadFile = async (file: File, bucket: string, fileName: string) => {
-    const { data, error } = await supabase.storage.from(bucket).upload(fileName, file, { upsert: true });
-    if (error) throw error;
-    const { data: urlData } = supabase.storage.from(bucket).getPublicUrl(fileName);
-    return urlData.publicUrl;
+  const uploadImageWithProgress = (file: File, bucket: string, fileName: string): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      if (!session) {
+        reject(new Error("User is not authenticated."));
+        return;
+      }
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const url = `${supabaseUrl}/storage/v1/object/${bucket}/${fileName}`;
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', url, true);
+      xhr.setRequestHeader('Authorization', `Bearer ${session.access_token}`);
+      xhr.setRequestHeader('X-Upsert', 'true');
+      xhr.setRequestHeader('Content-Type', file.type);
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable) {
+          const percentage = Math.round((event.loaded * 100) / event.total);
+          setUploadProgress(percentage);
+        }
+      };
+      xhr.onload = () => {
+        if (xhr.status === 200) {
+          const { data: urlData } = supabase.storage.from(bucket).getPublicUrl(fileName);
+          resolve(urlData.publicUrl);
+        } else {
+          try {
+            const errorResponse = JSON.parse(xhr.responseText);
+            reject(new Error(errorResponse.message || `Upload failed with status ${xhr.status}`));
+          } catch {
+            reject(new Error(`Upload failed with status ${xhr.status}: ${xhr.responseText}`));
+          }
+        }
+      };
+      xhr.onerror = () => reject(new Error('An error occurred during the upload. Check network connection.'));
+      xhr.send(file);
+    });
   };
 
-  // Tüm formu veritabanına kaydeder
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || !gameFile || !formData.title || !formData.description) {
-      setMessage("Game title, description, and a game file are required.");
+    if (!user || !gameLink || !formData.title || !formData.description) {
+      setMessage("Game title, description, and a Google Drive link are required.");
       return;
     }
     setLoading(true);
     setMessage('');
     try {
-      const gameFileName = `${user.id}_${Date.now()}_${gameFile.name}`;
-      const gameUrl = await uploadFile(gameFile, 'games', gameFileName);
-      let finalImageUrl = null;
-      if (imageFile) {
+      let finalImageUrl = imageUrl;
+      if (imageFile && imageFile.size > 0 && !imageUrl?.startsWith('http')) {
+        setMessage(`Uploading image file: ${imageFile.name}...`);
+        setUploadProgress(0);
         const imageFileName = `${user.id}_${Date.now()}_${imageFile.name}`;
-        finalImageUrl = await uploadFile(imageFile, 'images', imageFileName);
+        finalImageUrl = await uploadImageWithProgress(imageFile, 'images', imageFileName);
+        setUploadProgress(null);
       }
+      
+      setMessage('Saving game data...');
       const { error } = await supabase.from('games').insert([{
         title: formData.title,
         description: formData.description,
         category: formData.category,
-        file_url: gameUrl,
+        file_url: gameLink,
         image_url: finalImageUrl,
+        screenshots: screenshots,
         created_by: user.id,
         steam_appid: steamAppId,
         download_count: 0,
         rating: 0,
       }]);
       if (error) throw error;
+      
       setMessage('Game uploaded successfully!');
       setFormData({ title: '', description: '', category: 'action' });
-      setGameFile(null);
+      setGameLink('');
       setImageFile(null);
       setImageUrl(null);
       setSearchTerm('');
       setSteamAppId(null);
+      setScreenshots([]);
+
     } catch (error: any) {
       setMessage(`Error: ${error.message}`);
     } finally {
       setLoading(false);
+      setUploadProgress(null);
     }
   };
 
@@ -246,12 +292,24 @@ const GameUpload: React.FC = () => {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">Game File (ZIP, RAR, etc.)</label>
-              <label htmlFor="gameFile" className="w-full bg-slate-700 p-4 rounded-lg border-2 border-dashed border-slate-600 hover:border-purple-500 cursor-pointer flex items-center justify-center space-x-2">
-                <Upload className="h-5 w-5 text-gray-400" />
-                <span className="text-gray-300 truncate">{gameFile ? gameFile.name : 'Click to upload game file'}</span>
-                <input id="gameFile" type="file" accept=".zip,.rar,.7z" onChange={(e) => handleFileChange(e, 'game')} className="hidden" />
-              </label>
+              <label htmlFor="gameLink" className="block text-sm font-medium text-gray-300 mb-2">Google Drive Link</label>
+              <div className="relative">
+                 <LinkIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+                 <input 
+                    id="gameLink" 
+                    name="gameLink" 
+                    type="url" 
+                    required 
+                    value={gameLink} 
+                    onChange={handleLinkChange} 
+                    placeholder="Enter Google Drive download link"
+                    className="w-full bg-slate-700 text-white pl-10 pr-4 py-3 rounded-lg border border-slate-600 focus:border-purple-500 focus:ring-1 focus:ring-purple-500"
+                 />
+              </div>
+              <p className="text-xs text-gray-400 mt-2 flex items-center gap-1">
+                <Info size={14} />
+                Make sure file sharing is set to "Anyone with the link".
+              </p>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-300 mb-2">Game Image (Optional)</label>
@@ -260,12 +318,22 @@ const GameUpload: React.FC = () => {
                     <img src={imageUrl} alt="Preview" className="max-h-full w-auto rounded-md object-cover" />
                 ) : ( <ImageIcon className="h-8 w-8 text-gray-400" /> )}
                 <span className="text-gray-300 text-xs truncate">{imageFile ? imageFile.name : 'Click to upload image'}</span>
-                <input id="imageFile" type="file" accept="image/*" onChange={(e) => handleFileChange(e, 'image')} className="hidden" />
+                <input id="imageFile" type="file" accept="image/*" onChange={handleFileChange} className="hidden" />
               </label>
             </div>
           </div>
+
+          {uploadProgress !== null && (
+            <div className="space-y-2">
+                <div className="w-full bg-slate-700 rounded-full h-2.5">
+                    <div className="bg-purple-600 h-2.5 rounded-full" style={{ width: `${uploadProgress}%` }}></div>
+                </div>
+                <p className="text-right text-sm text-purple-400">{uploadProgress}%</p>
+            </div>
+          )}
+
           <div className="flex justify-end">
-            <button type="submit" disabled={loading || !gameFile || !formData.title || !formData.description} className="bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white px-6 py-3 rounded-lg flex items-center space-x-2 font-medium transition-colors">
+            <button type="submit" disabled={loading || !gameLink || !formData.title || !formData.description} className="bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white px-6 py-3 rounded-lg flex items-center space-x-2 font-medium transition-colors">
               {loading ? (<div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>) : (<><Save className="h-5 w-5" /><span>Upload Game</span></>)}
             </button>
           </div>

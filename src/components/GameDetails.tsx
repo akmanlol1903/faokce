@@ -80,10 +80,33 @@ const GameDetails: React.FC<{ gameId: string; onBack: () => void; }> = ({ gameId
     }
   };
 
-  const handleDownload = async () => { /* ... Mevcut indirme fonksiyonu ... */ };
+  const handleDownload = async () => {
+    if (!game) return;
+    try {
+        const { error: updateError } = await supabase
+            .from('games')
+            .update({ download_count: game.download_count + 1 })
+            .eq('id', game.id);
+        if (updateError) console.error('Error updating download count:', updateError);
+        let downloadLink = game.file_url;
+        if (downloadLink.includes('drive.google.com')) {
+            const fileIdMatch = downloadLink.match(/drive\.google\.com\/file\/d\/([^/]+)/);
+            if (fileIdMatch && fileIdMatch[1]) {
+                const fileId = fileIdMatch[1];
+                downloadLink = `https://drive.google.com/uc?export=download&id=${fileId}`;
+            }
+        }
+        window.open(downloadLink, '_blank');
+        setGame(prev => prev ? { ...prev, download_count: prev.download_count + 1 } : null);
+    } catch (error: any) {
+        console.error('Download failed:', error.message);
+        alert(`Error: Could not process the download. ${error.message}`);
+    }
+  };
 
-  const nextScreenshot = () => steamDetails && setCurrentScreenshot((p) => (p + 1) % steamDetails.screenshots.length);
-  const prevScreenshot = () => steamDetails && setCurrentScreenshot((p) => (p - 1 + steamDetails.screenshots.length) % steamDetails.screenshots.length);
+  const screenshots = game?.screenshots || [];
+  const nextScreenshot = () => setCurrentScreenshot((p) => (p + 1) % screenshots.length);
+  const prevScreenshot = () => setCurrentScreenshot((p) => (p - 1 + screenshots.length) % screenshots.length);
 
   if (loading) return <div className="flex justify-center items-center h-96"><Loader2 className="h-12 w-12 animate-spin text-purple-500" /></div>;
   if (error) return <div className="text-center text-red-400 p-8">{error}</div>;
@@ -113,19 +136,19 @@ const GameDetails: React.FC<{ gameId: string; onBack: () => void; }> = ({ gameId
         </div>
       </div>
       
+      {screenshots.length > 0 && (
+        <div className="bg-slate-800 rounded-xl p-6 md:p-8 border border-slate-700">
+          <h2 className="text-2xl font-bold text-white mb-4">Screenshots</h2>
+          <div className="relative">
+            <img src={screenshots[currentScreenshot]} alt={`Screenshot ${currentScreenshot + 1}`} className="w-full rounded-lg aspect-video object-cover" />
+            <button onClick={prevScreenshot} className="absolute left-2 md:left-4 top-1/2 -translate-y-1/2 bg-black/50 p-2 rounded-full text-white hover:bg-black/80 transition-colors"><ChevronLeft /></button>
+            <button onClick={nextScreenshot} className="absolute right-2 md:right-4 top-1/2 -translate-y-1/2 bg-black/50 p-2 rounded-full text-white hover:bg-black/80 transition-colors"><ChevronRight /></button>
+          </div>
+        </div>
+      )}
+
       {steamDetails && (
-        <div className="space-y-8">
-          {steamDetails.screenshots?.length > 0 && (
-            <div className="bg-slate-800 rounded-xl p-6 md:p-8 border border-slate-700">
-              <h2 className="text-2xl font-bold text-white mb-4">Screenshots</h2>
-              <div className="relative">
-                <img src={steamDetails.screenshots[currentScreenshot].url} alt={`Screenshot ${currentScreenshot + 1}`} className="w-full rounded-lg aspect-video object-cover" />
-                <button onClick={prevScreenshot} className="absolute left-2 md:left-4 top-1/2 -translate-y-1/2 bg-black/50 p-2 rounded-full text-white hover:bg-black/80 transition-colors"><ChevronLeft /></button>
-                <button onClick={nextScreenshot} className="absolute right-2 md:right-4 top-1/2 -translate-y-1/2 bg-black/50 p-2 rounded-full text-white hover:bg-black/80 transition-colors"><ChevronRight /></button>
-              </div>
-            </div>
-          )}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mt-8">
             <div className="lg:col-span-2 bg-slate-800 rounded-xl p-6 md:p-8 border border-slate-700">
               <h2 className="text-2xl font-bold text-white mb-4">About This Game</h2>
               <div className="prose prose-invert text-gray-300 max-w-none" dangerouslySetInnerHTML={{ __html: steamDetails.about_the_game }} />
@@ -146,7 +169,6 @@ const GameDetails: React.FC<{ gameId: string; onBack: () => void; }> = ({ gameId
               </div>
             </div>
           </div>
-        </div>
       )}
       
       <div className="bg-slate-800 rounded-xl p-6 md:p-8 border border-slate-700">

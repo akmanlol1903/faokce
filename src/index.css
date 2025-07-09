@@ -1,3 +1,12 @@
+/* "wght@" kısmına ;900 eklenerek Black font ağırlığı dahil edildi. */
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800;900&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Opsiyonel: Tüm siteye daha pürüzsüz bir font render'ı sağlamak için */
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}

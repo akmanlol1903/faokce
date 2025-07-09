@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Filter, Grid, List } from 'lucide-react';
+import { Filter, Grid, List } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import GameCard from './GameCard';
 
@@ -19,12 +19,12 @@ interface Game {
 
 interface GameListProps {
   onGameSelect: (gameId: string) => void;
+  searchTerm: string; // YENİ: Arama terimi prop olarak alınıyor
 }
 
-const GameList: React.FC<GameListProps> = ({ onGameSelect }) => {
+const GameList: React.FC<GameListProps> = ({ onGameSelect, searchTerm }) => {
   const [games, setGames] = useState<Game[]>([]);
   const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [sortBy, setSortBy] = useState('created_at');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
@@ -83,39 +83,41 @@ const GameList: React.FC<GameListProps> = ({ onGameSelect }) => {
 
   const handleDownload = async (gameId: string) => {
     try {
-      // Increment download count
-      const { error } = await supabase
-        .from('games')
-        .update({ download_count: supabase.raw('download_count + 1') })
-        .eq('id', gameId);
-
-      if (error) {
-        console.error('Error updating download count:', error);
-        return;
-      }
-
-      // Get the game to download
       const { data: game, error: gameError } = await supabase
         .from('games')
-        .select('file_url, title')
+        .select('file_url, title, download_count')
         .eq('id', gameId)
         .single();
 
-      if (gameError) {
-        console.error('Error fetching game:', gameError);
-        return;
+      if (gameError || !game) {
+        throw new Error('Game not found or error fetching game details.');
       }
 
-      // Trigger download
-      const link = document.createElement('a');
-      link.href = game.file_url;
-      link.download = `${game.title}.zip`;
-      link.click();
+      const { error: updateError } = await supabase
+        .from('games')
+        .update({ download_count: game.download_count + 1 })
+        .eq('id', gameId);
 
-      // Refresh games list
+      if (updateError) {
+        console.error('Error updating download count:', updateError);
+      }
+      
+      let downloadLink = game.file_url;
+      if (downloadLink.includes('drive.google.com')) {
+        const fileIdMatch = downloadLink.match(/drive\.google\.com\/file\/d\/([^/]+)/);
+        if (fileIdMatch && fileIdMatch[1]) {
+          const fileId = fileIdMatch[1];
+          downloadLink = `https://drive.google.com/uc?export=download&id=${fileId}`;
+        }
+      }
+
+      window.open(downloadLink, '_blank');
+      
       fetchGames();
-    } catch (error) {
-      console.error('Error downloading game:', error);
+      
+    } catch (error: any) {
+      console.error('Download failed:', error.message);
+      alert(`Error: Could not process the download. ${error.message}`);
     }
   };
 
@@ -131,17 +133,6 @@ const GameList: React.FC<GameListProps> = ({ onGameSelect }) => {
     <div className="space-y-6">
       {/* Search and Filters */}
       <div className="flex flex-col sm:flex-row gap-4 items-center justify-between">
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-          <input
-            type="text"
-            placeholder="Search games..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full bg-slate-800 text-white pl-10 pr-4 py-2 rounded-lg border border-slate-700 focus:border-purple-500 focus:ring-1 focus:ring-purple-500 focus:outline-none"
-          />
-        </div>
-
         <div className="flex items-center space-x-4">
           <div className="flex items-center space-x-2">
             <Filter className="h-4 w-4 text-gray-400" />
@@ -167,21 +158,20 @@ const GameList: React.FC<GameListProps> = ({ onGameSelect }) => {
             <option value="rating">Highest Rated</option>
             <option value="downloads">Most Downloaded</option>
           </select>
-
-          <div className="flex items-center space-x-2">
-            <button
-              onClick={() => setViewMode('grid')}
-              className={`p-2 rounded-lg ${viewMode === 'grid' ? 'bg-purple-600 text-white' : 'bg-slate-800 text-gray-400 hover:text-white'}`}
-            >
-              <Grid className="h-4 w-4" />
-            </button>
-            <button
-              onClick={() => setViewMode('list')}
-              className={`p-2 rounded-lg ${viewMode === 'list' ? 'bg-purple-600 text-white' : 'bg-slate-800 text-gray-400 hover:text-white'}`}
-            >
-              <List className="h-4 w-4" />
-            </button>
-          </div>
+        </div>
+        <div className="flex items-center space-x-2">
+          <button
+            onClick={() => setViewMode('grid')}
+            className={`p-2 rounded-lg ${viewMode === 'grid' ? 'bg-purple-600 text-white' : 'bg-slate-800 text-gray-400 hover:text-white'}`}
+          >
+            <Grid className="h-4 w-4" />
+          </button>
+          <button
+            onClick={() => setViewMode('list')}
+            className={`p-2 rounded-lg ${viewMode === 'list' ? 'bg-purple-600 text-white' : 'bg-slate-800 text-gray-400 hover:text-white'}`}
+          >
+            <List className="h-4 w-4" />
+          </button>
         </div>
       </div>
 
